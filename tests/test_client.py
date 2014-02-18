@@ -321,6 +321,16 @@ class TestClient(unittest.TestCase):
         response = client.download_file(123, 1000)
         self.assertEqual('hello world', response.text)
 
+    def test_download_bytes(self):
+        client = self.make_client("get", "files/123/content", params={}, headers={'Range': 'bytes=1-11'}, result='hello world', stream=False)
+        response = client.download_bytes(123, 1, 11)
+        self.assertEqual('hello world', response.text)
+
+    def test_download_bytes_with_version(self):
+        client = self.make_client("get", "files/123/content", params={'version': 1000}, headers={'Range': 'bytes=0-11'}, result='hello world', stream=False)
+        response = client.download_bytes(123, 0, 11, version=1000)
+        self.assertEqual('hello world', response.text)
+
     def test_get_thumbnail(self):
         client = BoxClient("my_token")
 
