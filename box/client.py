@@ -219,7 +219,7 @@ class CredentialsV2(object):
         - client_secret: The client_secret you obtained in the initial setup (optional)
         - refresh_call: A method that will be called when the tokens have been refreshed. Should take two arguments, access_token and refresh_token. (optional)
     """
-    def __init__(self, access_token, refresh_token=None, client_id=None, client_secret=None, refresh_callback=None):
+    def __init__(self, access_token, refresh_token=None, client_id=None, client_secret=None, refresh_callback=None, **kwargs):
         self._access_token = access_token
         self._refresh_token = refresh_token
         self._client_id = client_id
@@ -470,46 +470,37 @@ class BoxClient(object):
         """
         self._request("delete", 'files/{}/trash'.format(file_id))
 
-    def download_file(self, file_id, version=None):
+    def download_file(self, file_id, version=None, bot_range='', top_range=''):
         """
         Downloads a file
-
-        Args:
-            - file_id: The ID of the file to download.
-            - version: (optional) The ID specific version of this file to download.
-
-        Returns:
-            - Request's response object
-        """
-
-        params = {}
-        if version:
-            params['version'] = version
-
-        return self._request("get", 'files/{}/content'.format(file_id), params=params, stream=True)
-
-    def download_bytes(self, file_id, bot_range='', top_range='', version=None):
-        """
-        Downloads part of file, using bot and top range of bytes.
         By passing only bot_range you will get all bytes to the end of file
         begging from 'start_of_file + bot_range'
         By passing only top_range you will get all bytes from
         'end_of_file - top_range' to the end of file
 
         Args:
-            - file_d: The id of the file to download.
+            - file_id: The ID of the file to download.
             - version: (optional) The ID specific version of this file to download.
-            - bot_range: bottom limit of bytes to download
-            - top_range: top limit of bytes to download
+            - bot_range: (optional) bottom limit of bytes to download
+            - top_range: (optional) top limit of bytes to download
 
         Returns:
             - Request's response object
         """
+
         params = {}
+        headers = {}
         if version:
             params['version'] = version
 
-        return self._request("get", 'files/{}/content'.format(file_id), params=params, headers={'Range': 'bytes={bot}-{top}'.format(bot=bot_range, top=top_range)}, stream=False)
+        if bot_range or top_range:
+            headers = {
+                'Range': 'bytes={bot}-{top}'.format(bot=bot_range,
+                                                    top=top_range)
+            }
+
+        return self._request("get", 'files/{}/content'.format(file_id),
+                             headers=headers, params=params, stream=True)
 
     def get_thumbnail(self, file_id, extension="png", min_height=None, max_height=None, min_width=None, max_width=None, max_wait=0):
         """
