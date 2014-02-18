@@ -488,6 +488,29 @@ class BoxClient(object):
 
         return self._request("get", 'files/{}/content'.format(file_id), params=params, stream=True)
 
+    def download_bytes(self, file_id, bot_range='', top_range='', version=None):
+        """
+        Downloads part of file, using bot and top range of bytes.
+        By passing only bot_range you will get all bytes to the end of file
+        begging from 'start_of_file + bot_range'
+        By passing only top_range you will get all bytes from
+        'end_of_file - top_range' to the end of file
+
+        Args:
+            - file_d: The id of the file to download.
+            - version: (optional) The ID specific version of this file to download.
+            - bot_range: bottom limit of bytes to download
+            - top_range: top limit of bytes to download
+
+        Returns:
+            - Request's response object
+        """
+        params = {}
+        if version:
+            params['version'] = version
+
+        return self._request("get", 'files/{}/content'.format(file_id), params=params, headers={'Range': 'bytes={bot}-{top}'.format(bot=bot_range, top=top_range)}, stream=False)
+
     def get_thumbnail(self, file_id, extension="png", min_height=None, max_height=None, min_width=None, max_width=None, max_wait=0):
         """
         Downloads a file
