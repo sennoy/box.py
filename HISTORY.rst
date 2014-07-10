@@ -3,6 +3,21 @@
 Release History
 ---------------
 
+1.3.0
++++++
+- Added collaboration (thanks @samkuehn)
+- Added file comments & assignments (thanks @tsanch3z)
+- Added folder copying (thanks @emiller)
+- Fixed fields (thanks @samkuehn)
+
+1.2.8
++++++
+- Fixed get_thumbnail()
+
+1.2.7
++++++
+- Python 2.6 support (thanks @aaylward)
+
 1.2.6
 +++++
 - Fixed: upload_file did not respect filename if the fileobj had a name attribute

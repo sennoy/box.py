@@ -30,6 +30,16 @@ class EventType(object):
     ITEM_TRASH = 'ITEM_TRASH'
 
 
+class CollaboratorRole(object):
+    EDITOR = 'editor'
+    VIEWER = 'viewer'
+    PREVIEWER = 'previewer'
+    UPLOADER = 'uploader'
+    PREVIEWER_UPLOADER = 'previewer-uploader'
+    VIEWER_UPLOADER = 'viewer-uploader'
+    CO_OWNER = 'co-owner'
+
+
 class ShareAccess(object):
     OPEN = 'open'
     COMPANY = 'company'
@@ -85,9 +95,14 @@ def finish_authenticate_v1(api_key, ticket):
     if content.status != 'get_auth_token_ok':
         raise BoxAuthenticationException(r.status_code, content.status.text)
 
+    user_dict = {}
+
+    for x in content.user.iterchildren():
+        user_dict[x.tag] = x.pyval
+
     return {
         'token': content.auth_token.text,
-        'user': {x.tag: x.pyval for x in content.user.iterchildren()}
+        'user': user_dict
     }
 
 
@@ -198,7 +213,7 @@ class CredentialsV1(object):
 
     @property
     def headers(self):
-        return {'Authorization': 'BoxAuth api_key={}&auth_token={}'.format(self._api_key, self._access_token)}
+        return {'Authorization': 'BoxAuth api_key={0}&auth_token={1}'.format(self._api_key, self._access_token)}
 
     def refresh(self):
         """
@@ -228,7 +243,7 @@ class CredentialsV2(object):
 
     @property
     def headers(self):
-        return {'Authorization': 'Bearer {}'.format(self._access_token)}
+        return {'Authorization': 'Bearer {0}'.format(self._access_token)}
 
     def refresh(self):
         """
@@ -366,9 +381,9 @@ class BoxClient(object):
         }
 
         if fields:
-            params['fields'] = fields
+            params['fields'] = ','.join(fields)
 
-        return self._request("get", 'folders/{}'.format(folder_id), params=params).json()
+        return self._request("get", 'folders/{0}'.format(folder_id), params=params).json()
 
     def get_folder_content(self, folder_id=0, limit=100, offset=0, fields=None):
         """
@@ -387,9 +402,9 @@ class BoxClient(object):
         }
 
         if fields:
-            params['fields'] = fields
+            params['fields'] = ','.join(fields)
 
-        return self._request("get", 'folders/{}/items'.format(folder_id), params=params).json()
+        return self._request("get", 'folders/{0}/items'.format(folder_id), params=params).json()
 
     def get_folder_iterator(self, folder_id):
         """
@@ -400,12 +415,44 @@ class BoxClient(object):
         batch_size = 1000
         content = self.get_folder_content(folder_id, limit=batch_size)
         offset = 0
-        while content['entries']:
+        while content['entries']:  # while the current batch has entries
             for entry in content['entries']:
                 yield entry
-
+            
+            # stop if 'total_count' of entries (or more) has been fetched so far
+            if  offset + len(content['entries']) >= content['total_count']:
+                break
+                
+            # otherwise, fetch the next batch and repeat
             offset += batch_size
             content = self.get_folder_content(folder_id, limit=batch_size, offset=offset)
+
+    def copy_folder(self, folder_id, destination_parent, new_foldername=None):
+        """
+        Copies a given `folder_id` into a new location, `destination_parent`. By default
+        the original name of the folder is used unless `new_foldername` is provided.
+
+        @see https://developers.box.com/docs/#folders-copy-a-folder
+
+        Args:
+            - file_id: the id of the file we want to copy
+            - destination_parent: ID or a dictionary (as returned by the apis) of the target folder
+            - new_foldername: (optional) name the copy `new_foldername`, if provided.
+
+        Returns:
+            - a dictionary containing the metadata of newly created copy
+        """
+
+        data = {
+            'parent': {
+            'id': self._get_id(destination_parent)
+            }
+        }
+
+        if new_foldername:
+            data.update({'name': new_foldername})
+
+        return self._request('post', 'folders/{0}/copy'.format(folder_id), data=data).json()
 
     def create_folder(self, name, parent=0):
         """
@@ -419,6 +466,17 @@ class BoxClient(object):
 
         return self._request("post", 'folders', data=data).json()
 
+    def get_folder_collaborations(self, folder_id):
+        """
+        Fetches the collaborations of the given folder_id
+
+        Args:
+            - folder_id: the folder id.
+
+        Returns a list with all folder collaborations.
+        """
+        return self._request("get", 'folders/{0}/collaborations'.format(folder_id)).json()
+
     def get_file_metadata(self, file_id):
         """
         Fetches the metadata of the given file_id
@@ -428,7 +486,25 @@ class BoxClient(object):
 
         Returns a dictionary with all of the file metadata.
         """
-        return self._request("get", 'files/{}'.format(file_id)).json()
+        return self._request("get", 'files/{0}'.format(file_id)).json()
+
+    def get_file_comments(self, file_id):
+        """ Retrieves a file's associated comments
+
+        Args:
+            - file_id: the file id
+        Returns a list of mini formatted comments
+        """
+        return self._request('get', 'files/{0}/comments'.format(file_id)).json()
+
+    def get_file_tasks(self, file_id):
+        """ Retrieves a file's associated tasks
+
+        Args:
+            - file_id: the file id
+        Returns a list of mini formatted tasks
+        """
+        return self._request('get', 'files/{0}/tasks'.format(file_id)).json()
 
     def delete_file(self, file_id, etag=None):
         """
@@ -443,7 +519,7 @@ class BoxClient(object):
         if etag:
             headers['If-Match'] = etag
 
-        self._request("delete", 'files/{}'.format(file_id), headers=headers)
+        self._request("delete", 'files/{0}'.format(file_id), headers=headers)
 
     def delete_folder(self, folder_id, etag=None, recursive=False):
         """
@@ -462,13 +538,13 @@ class BoxClient(object):
         if recursive:
             params['recursive'] = 'true'
 
-        self._request("delete", 'folders/{}'.format(folder_id), headers=headers, params=params)
+        self._request("delete", 'folders/{0}'.format(folder_id), headers=headers, params=params)
 
     def delete_trashed_file(self, file_id):
         """
         Permanently deletes an item that is in the trash.
         """
-        self._request("delete", 'files/{}/trash'.format(file_id))
+        self._request("delete", 'files/{0}/trash'.format(file_id))
 
     def download_file(self, file_id, version=None, bot_range='', top_range=''):
         """
@@ -493,14 +569,7 @@ class BoxClient(object):
         if version:
             params['version'] = version
 
-        if bot_range or top_range:
-            headers = {
-                'Range': 'bytes={bot}-{top}'.format(bot=bot_range,
-                                                    top=top_range)
-            }
-
-        return self._request("get", 'files/{}/content'.format(file_id),
-                             headers=headers, params=params, stream=True)
+        return self._request("get", 'files/{0}/content'.format(file_id), params=params, stream=True)
 
     def get_thumbnail(self, file_id, extension="png", min_height=None, max_height=None, min_width=None, max_width=None, max_wait=0):
         """
@@ -527,7 +596,7 @@ class BoxClient(object):
         if max_width is not None:
             params['max_width'] = max_width
 
-        response = self._request("get", 'files/{}/thumbnail.{}'.format(file_id, extension), params=params)
+        response = self._request("get", 'files/{0}/thumbnail.{1}'.format(file_id, extension), params=params, stream=True)
         if response.status_code == 202:
             # Thumbnail not ready yet
             ready_in_seconds = int(response.headers["Retry-After"])
@@ -537,7 +606,7 @@ class BoxClient(object):
             # Wait for the thumbnail to get ready
             time.sleep(ready_in_seconds)
 
-            response = requests.get(response.headers["Location"], headers=self.default_headers)
+            response = self._request("get", 'files/{0}/thumbnail.{1}'.format(file_id, extension), params=params, stream=True)
             self._check_for_errors(response)
             return response.raw
         elif response.status_code == 302:
@@ -555,7 +624,7 @@ class BoxClient(object):
                         raised.
             - fileobj: a fileobj-like object that contains the data to upload
             - parent: (optional) ID or a Dictionary (as returned by the apis) of the parent folder
-            - content_modified_at: (optional) a timestamp (datetime or a properly formatted string) of the time the
+            - content_created_at: (optional) a timestamp (datetime or a properly formatted string) of the time the
               content was created
             - content_modified_at: (optional) a timestamp (datetime or a properly formatted string) of the time the
               content was last modified
@@ -597,7 +666,7 @@ class BoxClient(object):
         if content_modified_at:
             form['content_modified_at'] = content_modified_at.isoformat() if isinstance(content_modified_at, datetime) else content_modified_at
 
-        response = requests.post('https://upload.box.com/api/2.0/files/{}/content'.format(file_id),
+        response = requests.post('https://upload.box.com/api/2.0/files/{0}/content'.format(file_id),
                                  form,
                                  headers=headers,
                                  files={'file': fileobj})
@@ -623,7 +692,7 @@ class BoxClient(object):
         if new_filename:
             data['name'] = new_filename
 
-        return self._request("post", 'files/{}/copy'.format(file_id), data=data).json()
+        return self._request("post", 'files/{0}/copy'.format(file_id), data=data).json()
 
     def share_link(self, file_id, access=ShareAccess.OPEN, expire_at=None, can_download=None, can_preview=None):
         """
@@ -667,7 +736,7 @@ class BoxClient(object):
         if expire_at:
             data['unshared_at'] = expire_at.isoformat()
 
-        result = self._request("put", 'files/{}'.format(file_id), data={'shared_link': data}).json()
+        result = self._request("put", 'files/{0}'.format(file_id), data={'shared_link': data}).json()
         return result['shared_link']
 
     def get_events(self, stream_position='0', stream_type=EventFilter.ALL, limit=1000):
@@ -747,6 +816,182 @@ class BoxClient(object):
         path_parts.append(file_metadata['name'])
         return '/' + '/'.join(path_parts)
 
+    def get_comment_information(self, comment_id):
+        """ Retrieves information about a comment
+
+        Args:
+            - comment_id: the comment id
+        Returns a full comment object
+        """
+        return self._request('get', 'comments/{0}'.format(comment_id)).json()
+
+    def add_comment(self, id, type, message):
+        """ Add a comment to the given file or comment
+
+        Args:
+            - id: the id of the object to comment
+            - type: the type of the object to comment, can be "file" or "comment"
+            - message: the comment's message
+
+        Returns the newly created comment full object
+        """
+
+        item = {"type": type, "id": id}
+
+        data = {'item': item, 'message': message}
+        return self._request('post', 'comments', data=data).json()
+
+    def change_comment(self, comment_id, message):
+        """ Change a comment's message
+
+        Args:
+            - comment_id: the comment's to change id
+            - message: the new message
+
+        Returns the modified comment full object
+        """
+        data = {'message': message}
+        return self._request('put', 'comments/{0}'.format(comment_id), data=data).json()
+
+    def delete_comment(self, comment_id):
+        """ Delete a given comment from box
+
+        Args:
+            - comment_id: the comment id
+
+        """
+        self._request('delete', 'comments/{0}'.format(comment_id))
+
+    def get_task_information(self, task_id):
+        """ Retrieves information about a task
+
+        Args:
+            - task_id: the task id
+        Returns a full task object
+        """
+        return self._request('get', 'tasks/{0}'.format(task_id)).json()
+
+    def add_task(self, file_id, due_at, action='review', message=None):
+        """ Add a task to the given file
+
+        Args:
+            - file_id: the file to add a task to
+            - due_at: a datetime object containing the due date
+            - (optional) message: the task's message
+            - (optional) action: currently only support 'review'
+
+        Returns the newly created task full object
+        """
+
+        item = {"type": "file", "id": file_id}
+        data = {
+            'item': item,
+            'action': action,
+            'due_at': str(due_at),
+            'message': message,
+        }
+        return self._request('post', 'tasks', data=data).json()
+
+    def change_task(self, task_id, due_at, action='review', message=None):
+        """ Change a task
+
+        Args:
+            - task_id: the task's to change id
+            - due_at: a datetime for the day the task is due
+            - (optional) message: the new task's message
+            - (optional) action: currently only support 'review'
+
+        Returns the modified task full object
+        """
+
+        data = {
+            'action': action,
+            'due_at': str(due_at),
+        }
+        if message:
+            data['message'] = message
+
+        return self._request('put', 'tasks/{0}'.format(task_id), data=data).json()
+
+    def delete_task(self, task_id):
+        """ Delete a given task from box
+
+        Args:
+            - task_id: the comment id
+
+        """
+        self._request('delete', 'tasks/{0}'.format(task_id))
+
+    def get_task_assignments(self, task_id):
+        """ Retrieves assignments for a given task
+
+        Args:
+            - task_id: the task id
+
+        Returns the list of the task assignments (mini formatted)
+        """
+        return self._request('get', 'tasks/{0}/assignments'.format(task_id)).json()
+
+    def get_assignment(self, assignment_id):
+        """ Retrieves a given assignment information
+
+        Args
+            - assignment_id: the assignment id
+
+        Returns an assignment full object
+        """
+
+        return self._request('get', 'task_assignments/{0}'.format(assignment_id)).json()
+
+    def assign_task(self, task_id, user_id=None, login=None):
+        """ Assign the given task to a user
+
+        Args:
+            - task_id: the task id
+            - id: (optional) the id of the user to assign the task to
+            - login: (optional) the login of the user to assign the task to
+            At least the id or login field is to be set to identify the user
+
+        Returns a full task assignment object
+        """
+        task = {"id": task_id, "type": "task"}
+        assign_to = dict()
+        if user_id:
+            assign_to['id'] = user_id
+        if login:
+            assign_to['login'] = login
+
+        data = {'task': task, 'assign_to': assign_to}
+
+        return self._request('post', 'task_assignments', data=data).json()
+
+    def update_assignment(self, assignment_id, resolution_state, message=None):
+        """ Update a task assignment state
+
+        Args:
+          - assignment_id: the assignment to update id
+          - message: (optional) A message about the state change
+          - resolution_state: can be "completed", "incomplete", "approved" or "rejected"
+
+        Returns the modified task assignment object
+        """
+
+        data = {'resolution_state': resolution_state}
+
+        if message:
+            data['message'] = message
+
+        return self._request('put', 'task_assignments/{0}'.format(assignment_id), data=data).json()
+
+    def delete_assignment(self, assignment_id):
+        """ Delete the given assignment
+
+        Args
+            - assignment_id: the assignment id
+        """
+
+        self._request('delete', 'task_assignments/{0}'.format(assignment_id))
+
     def search(self, query, limit=30, offset=0):
         """
         The search endpoint provides a simple way of finding items that are accessible in a given user's Box account.
@@ -765,6 +1010,97 @@ class BoxClient(object):
         }
 
         return self._request("get", 'search', params).json()
+
+    def get_collaboration(self, collaboration_id):
+        """
+        Fetches the collaboration of the given collaboration_id
+
+        Args:
+            - collaboration_id: the collaboration id.
+
+        Returns a dictionary with all of the collaboration data.
+        """
+        return self._request("get", 'collaborations/{0}'.format(collaboration_id)).json()
+
+    def create_collaboration_by_user_id(self, folder_id, user_id, role=CollaboratorRole.VIEWER, notify=False):
+        """
+        Create a collaboration of the given folder_id and user_id
+
+        Args:
+            - folder_id: the folder id.
+            - user_id: the user id.
+            - role: (optional) access level of this collaboration from ``CollaboratorRole``. (default=CollaboratorRole.VIEWER)
+            - notify: (optional) determines if the user should receive email notification of the collaboration. ``CollaboratorRole``. (default=False)
+
+        Returns a dictionary with all of the collaboration data.
+        """
+        params = {
+            'notify': notify,
+        }
+        data = {
+            'item': {'id': folder_id, 'type': 'folder'},
+            'accessible_by': {'id': user_id, 'type': 'user'},
+            'role': role,
+        }
+        return self._request('post', 'collaborations', params, data=data).json()
+
+    def create_collaboration_by_login(self, folder_id, login, role=CollaboratorRole.VIEWER, notify=False):
+        """
+        Create a collaboration of the given folder_id and login (login does not need to be a Box user)
+
+        Args:
+            - folder_id: the folder id.
+            - login: the user login (does not need to be a Box user).
+            - role: (optional) access level of this collaboration from ``CollaboratorRole``. (default=CollaboratorRole.VIEWER)
+            - notify: (optional) determines if the user should receive email notification of the collaboration. ``CollaboratorRole``. (default=False)
+
+        Returns a dictionary with all of the collaboration data.
+        """
+        params = {
+            'notify': notify,
+        }
+        data = {
+            'item': {'id': folder_id, 'type': 'folder'},
+            'accessible_by': {'login': login, 'type': 'user'},
+            'role': role,
+        }
+        return self._request('post', 'collaborations', params, data=data).json()
+
+    def edit_collaboration(self, collaboration_id, role=CollaboratorRole.VIEWER, etag=None):
+        """
+        Edit an existing collaboration.
+
+        Args:
+            - collaboration_id: collaboration id to be edited
+            - role: (optional) access level of this collaboration from ``CollaboratorRole``. (default=CollaboratorRole.VIEWER)
+            - etag: (optional) If specified, the file will only be deleted if
+                    its etag matches the parameter
+        """
+
+        headers = {}
+        if etag:
+            headers['If-Match'] = etag
+
+        data = {
+            'role': role,
+        }
+        return self._request('put', 'collaborations/{0}'.format(collaboration_id), headers=headers, data=data).json()
+
+    def delete_collaboration(self, collaboration_id, etag=None):
+        """
+        Deletes a collaboration.
+
+        Args:
+            - collaboration_id: collaboration id to be deleted
+            - etag: (optional) If specified, the file will only be deleted if
+                    its etag matches the parameter
+        """
+
+        headers = {}
+        if etag:
+            headers['If-Match'] = etag
+
+        self._request("delete", 'collaborations/{0}'.format(collaboration_id), headers=headers)
 
 
 class BoxClientException(Exception):
